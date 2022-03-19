@@ -1,0 +1,12 @@
+MCU = atmega8a
+
+.PHONY = flash
+
+a.out: main.c i2c.c
+	avr-gcc -mmcu=$(MCU) main.c -o a.out
+
+a.hex: a.out
+	avr-objcopy -O ihex a.out a.hex
+
+flash: a.hex
+	avrdude -p atmega8a - B 8 -c stk500v2 -U flash:w:a.hex:i -P /dev/ttyUSB0
