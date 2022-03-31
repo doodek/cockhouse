@@ -2,6 +2,11 @@
 #include <util/delay.h>
 #include <avr/interrupt.h>
 
+// basis for start and end of the door open window
+// (hour<<8)|mins
+#define BASIS_START 0x0600
+#define BASIS_END 0x2000
+
 void debug() {
         PORTB &= ~(1<<PB0);
         _delay_ms(200);
@@ -10,6 +15,16 @@ void debug() {
 }
 
 #include "i2c.c"
+
+// Two limiting switches
+// Bottom | Top
+// MSB 1  | 0 LSB
+typedef enum doorState {
+  NONE = 0, // both switches are open
+  OPEN = 1, // top switch is closed, bottom is open
+  CLOSE = 2, // bottom switch is open, top is closed
+  BLOCKED = 3 // both switches are closed
+} doorState;
 
 unsigned char registers[8];
 
@@ -24,7 +39,37 @@ void setupDate() {
     writeRegister(0, 0x30); // second, 30
 }
 
+int readDate() {
+  readRegisters(registers);
+  return ((registers[2]<<8) | registers[1]);
+}
+
+unsigned char getTimeShift() {
+  return 0;
+}
+
+doorState readLimitSwitches() {
+  return NONE;
+}
+
+doorState shouldDoor() {
+  int d = readDate();
+  if ((BASIS_START+getTimeShift()) < d && d < (BASIS_END+getTimeShift())) // FIXME: make this correct
+    return OPEN;
+  return CLOSE;
+}
+
 void checkDoor() {
+  doorState should = shouldDoor();
+  doorState actual = readLimitSwitches();
+  if (should != actual) {
+    if (actual == NONE || actual == BLOCKED) {
+      // fuckup, fix somehow
+    } else {
+      // open/close the door
+    }
+  }
+  // everything ok
 }
 
 int main(){
