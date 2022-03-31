@@ -13,14 +13,15 @@ void debug() {
 
 unsigned char registers[8];
 
+// Hard codes the date in the RTC
 void setupDate() {
-    writeRegister(6, 0x22); // year
-    writeRegister(5, 0x03); // month
-    writeRegister(4, 0x31); // day
-    writeRegister(3, 4); // day of week
-    writeRegister(2, 0x19); // hour
-    writeRegister(1, 0x20); // minute
-    writeRegister(0, 0x30); // second
+    writeRegister(6, 0x22); // year, (20)22
+    writeRegister(5, 0x03); // month, 03 - March
+    writeRegister(4, 0x31); // day, 31th
+    writeRegister(3, 4); // day of week, Thursday
+    writeRegister(2, 0x19); // hour, 19
+    writeRegister(1, 0x20); // minute, 20
+    writeRegister(0, 0x30); // second, 30
 }
 
 void checkDoor() {
