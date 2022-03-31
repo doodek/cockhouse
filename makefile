@@ -9,4 +9,4 @@ a.hex: a.out
 	avr-objcopy -O ihex a.out a.hex
 
 flash: a.hex
-	avrdude -p atmega8a - B 8 -c stk500v2 -U flash:w:a.hex:i -P /dev/ttyUSB0
+	avrdude -p atmega8a  -c stk500v2 -U flash:w:a.hex:i -P /dev/ttyUSB0
