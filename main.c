@@ -7,10 +7,9 @@
 #define CONFIG_PUB ((1<<PB0) | (1<<PB2) | (1<<PB3) | (1<<PB4) | (1<<PB5))
 #define CONFIG_PUD ((1<<PD7) | (1<<PD6) | (1<<PD5))
 
-// basis for start and end of the door open window
-// (hour<<8)|mins
-#define BASIS_START 0x0600
-#define BASIS_END 0x2000
+// Basic time of opening and closing, that get offset
+#define TIME_OPEN 7*60
+#define TIME_CLOSE 19*60
 
 void debug() {
   //  PORTB &= ~(1<<PB0);
@@ -22,6 +21,10 @@ void debug() {
 #include "i2c.c"
 
 unsigned char registers[8];
+signed char time_open_offset;
+signed char time_close_offset;
+char ticker;
+int ticks_since_change;
 
 // Hard codes the date in the RTC
 void setupDate() {
@@ -34,21 +37,103 @@ void setupDate() {
   writeRegister(0, 0x30); // second, 30
 }
 
+// Converts the weird notation of RTC into manageable base-10
+char convertRTC10(char d) {
+  return (d & 0xf) + (d & 0xf0) * 10;
+}
+
+// Reads the current time from RTC and returns minutes from midnight
 int readDate() {
   readRegisters(registers);
-  return ((registers[2]<<8) | registers[1]);
+  return (convertRTC10(registers[2]) * 60 + convertRTC10(registers[1]));
 }
 
-unsigned char getTimeShift() {
-  return 0;
+int getTemperature() {}
+int getMotorCurrent() {}
+char isOverheating() {}
+
+typedef enum direction {
+  STOP,
+  OPEN,
+  CLOSE
+} direction;
+
+direction current_direction = STOP;
+
+typedef enum failure {
+  NONE,
+  BLOCKED,
+  LIMIT_FAILURE,
+  MOTOR_FAILURE,
+  TOO_LONG
+} failure;
+
+void setDirection(direction dir) {
+  ticks_since_change = 0;
+  current_direction = dir;
 }
 
+void setOverride(char t) {}
+
+void motorHandler() {
+  int now = readDate();
+  direction wanted_dir = CLOSE;
+  if (now > (TIME_OPEN + time_open_offset) &&
+      now < (TIME_CLOSE + time_close_offset)) {
+    // Open window in effect
+    wanted_dir = OPEN;
+  } else {
+    wanted_dir = CLOSE;
+  }
+
+  if (isOverheating()) {
+    setDirection(STOP); // immediately stop if safety is breached
+    current_failure = BLOCKED;
+    return;
+  }
+
+  if (current_failure == BLOCKED && !isOverHeating()) {
+    setDirection(!wanted_dir); // try to slack a bit and then rewind
+    _delay_ms(50);
+    setDirection(wanted_dir);
+    _delay_ms(50);
+    setDirection(STOP);
+    current_failure = NONE;
+  }
+
+  if (current_failure == LIMIT_FAILURE) {
+    if (ticks_since_change > TICKS_MAX) {
+      setDirection(STOP);
+    }
+    
+    return;
+  }
+
+  if (ticks_since_change > TICKS_MAX && getMotorCurrent() > CUTOFF_CURRENT) {
+    setDirection(STOP);
+    current_failure = TOO_LONG;
+  }
+
+  if (current_direction != wanted_dir) {
+    setDirection(wanted_dir);
+    _delay_ms(50);
+    if (getMotorCurrent() < CUTOFF_CURRENT) {
+      current_failure = LIMIT_FAILURE;
+
+      setOverride(1);
+      _delay_ms(50);
+      if (getMotorCurrent() < CUTOFF_CURRENT) {
+	current_failure = MOTOR_FAILURE;
+      }
+    }
+  }
+}
 
 int main(){
 
   // watchdog
 
-  
+  // FIXME: Outputs for the motor direction set
   DDRC |= (1<<PC5) | (1<<PC4); // I2C RTC
 
   // Setup Input Pullup on Config DIPs
@@ -56,11 +141,11 @@ int main(){
   PORTD |= CONFIG_PUD;
 
   // save offsets in minutes, [-105, 105]
-  const static signed char time_start_offset =
+  time_open_offset =
     (read1(PINB, PB0) != 0) ? -1 : 1) *
     (read1(PIND, PD7) * 15 + read1(PIND, PD6) * 30 + read1(PIND, PD5) * 60));
 
-  const static signed char time_end_offset =
+  time_close_offset =
     (read1(PINB, PB2) != 0) ? -1 : 1) *
     (read1(PINB, PB3) * 15 + read1(PINB, PB4) * 30 + read1(PINB, PB5) * 60));
 
@@ -75,9 +160,17 @@ int main(){
 
   sei();
 
-  while(1) {}
+  while(1) {
+    while(ticker != 0) {}
+    ticker = 1;
+
+    motorHandler();
+  }
 }
 
+// Consider changing to Timer2 for power saving 
 ISR(TIMER1_OVF_vect) {
   debug();
+  ticker--;
+  ticks_since_change++;
 }
