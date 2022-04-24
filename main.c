@@ -1,6 +1,7 @@
 #include <avr/io.h>
 #include <util/delay.h>
 #include <avr/interrupt.h>
+#include <avr/wdt.h> 
 
 #define read1(r, o) ((r >> o) & 1)
 
@@ -26,6 +27,17 @@ signed char time_close_offset;
 char ticker;
 int ticks_since_change;
 
+void watchdogEnable() {
+  wdt_reset();
+  WDTCR |= (1<<WDP2) | (1<<WDP1) | (1<<WDP0) | (1<<WDE);
+}
+
+void watchdogDisable() {
+  wdt_reset();
+  WDTCR |= (1<<WDE) | (1<<WDCE);
+  WDTCR = 0;
+}
+
 // Hard codes the date in the RTC
 void setupDate() {
   writeRegister(6, 0x22); // year, (20)22
@@ -50,7 +62,9 @@ int readDate() {
 
 int getTemperature() {}
 int getMotorCurrent() {}
-char isOverheating() {}
+char isOverheating() {
+  return (getTemperature() > SAFE_TEMP) || (getMotorCurrent() > SAFE_CURRENT);
+}
 
 typedef enum direction {
   STOP,
@@ -76,7 +90,9 @@ void setDirection(direction dir) {
 void setOverride(char t) {}
 
 void motorHandler() {
+  wdt_reset();
   int now = readDate();
+  wdt_reset();
   direction wanted_dir = CLOSE;
   if (now > (TIME_OPEN + time_open_offset) &&
       now < (TIME_CLOSE + time_close_offset)) {
@@ -92,6 +108,8 @@ void motorHandler() {
     return;
   }
 
+  wdt_reset();
+
   if (current_failure == BLOCKED && !isOverHeating()) {
     setDirection(!wanted_dir); // try to slack a bit and then rewind
     _delay_ms(50);
@@ -101,13 +119,25 @@ void motorHandler() {
     current_failure = NONE;
   }
 
+  wdt_reset();
+
   if (current_failure == LIMIT_FAILURE) {
     if (ticks_since_change > TICKS_MAX) {
       setDirection(STOP);
     }
+
+    if (wanted_dir != current_direction) {
+      setDirection(wanted_dir);
+      _delay_ms(50);
+      if (getMotorCurrent() < CUTOFF_CURRENT) {
+	current_failure = MOTOR_FAILURE;
+      } 
+    }
     
     return;
   }
+
+  wdt_reset();
 
   if (ticks_since_change > TICKS_MAX && getMotorCurrent() > CUTOFF_CURRENT) {
     setDirection(STOP);
@@ -162,9 +192,11 @@ int main(){
 
   while(1) {
     while(ticker != 0) {}
+    watchdogEnable();
     ticker = 1;
 
     motorHandler();
+    watchdogDisable();
   }
 }
 
