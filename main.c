@@ -1,3 +1,4 @@
+#define F_CPU 1000000
 #include <avr/io.h>
 #include <util/delay.h>
 #include <avr/interrupt.h>
@@ -11,6 +12,8 @@
 // Basic time of opening and closing, that get offset
 #define TIME_OPEN 7*60
 #define TIME_CLOSE 19*60
+#define CUTOFF_CURRENT 0
+#define TICKS_MAX 1000
 
 void debug() {
   //  PORTB &= ~(1<<PB0);
@@ -63,7 +66,7 @@ int readDate() {
 int getTemperature() {}
 int getMotorCurrent() {}
 char isOverheating() {
-  return (getTemperature() > SAFE_TEMP) || (getMotorCurrent() > SAFE_CURRENT);
+  return 0;//(getTemperature() > SAFE_TEMP) || (getMotorCurrent() > SAFE_CURRENT);
 }
 
 typedef enum direction {
@@ -85,11 +88,25 @@ typedef enum failure {
 void setDirection(direction dir) {
   ticks_since_change = 0;
   current_direction = dir;
+
+  if(current_direction == OPEN){
+    PORTB &= ~(1<<PB6);
+    PORTD |= (1<<PD2);
+  } else if (current_direction == CLOSE){
+    PORTD &= ~(1<<PD2);
+    PORTB |= (1<<PB6);
+  } else {
+    PORTB &= ~(1<<PB6);
+    PORTD &= ~(1<<PD2);
+  }
+
 }
 
 void setOverride(char t) {}
 
 void motorHandler() {
+  static char current_failure = NONE;
+
   wdt_reset();
   int now = readDate();
   wdt_reset();
@@ -110,7 +127,7 @@ void motorHandler() {
 
   wdt_reset();
 
-  if (current_failure == BLOCKED && !isOverHeating()) {
+  if (current_failure == BLOCKED && !isOverheating()) {
     setDirection(!wanted_dir); // try to slack a bit and then rewind
     _delay_ms(50);
     setDirection(wanted_dir);
@@ -128,9 +145,9 @@ void motorHandler() {
 
     if (wanted_dir != current_direction) {
       setDirection(wanted_dir);
-      _delay_ms(50);
+      _delay_ms(1);
       if (getMotorCurrent() < CUTOFF_CURRENT) {
-	current_failure = MOTOR_FAILURE;
+	      //current_failure = MOTOR_FAILURE;
       } 
     }
     
@@ -138,20 +155,22 @@ void motorHandler() {
   }
 
   wdt_reset();
+  watchdogDisable();
 
   if (ticks_since_change > TICKS_MAX && getMotorCurrent() > CUTOFF_CURRENT) {
+    while(1);
     setDirection(STOP);
     current_failure = TOO_LONG;
   }
 
   if (current_direction != wanted_dir) {
     setDirection(wanted_dir);
-    _delay_ms(50);
+    _delay_ms(100);
     if (getMotorCurrent() < CUTOFF_CURRENT) {
       current_failure = LIMIT_FAILURE;
 
       setOverride(1);
-      _delay_ms(50);
+      _delay_ms(5000);
       if (getMotorCurrent() < CUTOFF_CURRENT) {
 	current_failure = MOTOR_FAILURE;
       }
@@ -165,6 +184,18 @@ int main(){
 
   // FIXME: Outputs for the motor direction set
   DDRC |= (1<<PC5) | (1<<PC4); // I2C RTC
+  
+  //###BLOCKOUT 
+  DDRD  |=  (1<<PD2)   //fwd--enable
+  //    |   (1<<PD3)   //fwd--override
+        |   (1<<PD4);  //L293D-enable set out
+
+  DDRB  |=  (1<<PB6);  //back-enable
+  //    |   (1<<PB7);  //back-override
+
+
+  PORTD |= (1<<PD4);   //L293D enable set high
+  //###BLOCKOUT
 
   // Setup Input Pullup on Config DIPs
   PORTB |= CONFIG_PUB;
@@ -172,12 +203,12 @@ int main(){
 
   // save offsets in minutes, [-105, 105]
   time_open_offset =
-    (read1(PINB, PB0) != 0) ? -1 : 1) *
-    (read1(PIND, PD7) * 15 + read1(PIND, PD6) * 30 + read1(PIND, PD5) * 60));
+    ((read1(PINB, PB0) != 0) ? -1 : 1) *
+    (read1(PIND, PD7) * 15 + read1(PIND, PD6) * 30 + read1(PIND, PD5) * 60);
 
   time_close_offset =
-    (read1(PINB, PB2) != 0) ? -1 : 1) *
-    (read1(PINB, PB3) * 15 + read1(PINB, PB4) * 30 + read1(PINB, PB5) * 60));
+    ((read1(PINB, PB2) != 0) ? -1 : 1) *
+    (read1(PINB, PB3) * 15 + read1(PINB, PB4) * 30 + read1(PINB, PB5) * 60);
 
   // Remove Pullup on Config (Hi-Z)
   PORTB &= ~CONFIG_PUB;
